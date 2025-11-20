@@ -4,16 +4,18 @@ import '../models/category.dart';
 import '../models/place.dart';
 import '../models/reservation.dart';
 import '../models/user.dart';
+import '../models/favorite.dart';
 
 class DatabaseHelper {
   static const _databaseName = 'figma_hotels.db';
-  static const _databaseVersion = 1;
+  static const _databaseVersion = 2;
 
   // Nombres de las tablas
   static const String categoriesTable = 'categories';
   static const String placesTable = 'places';
   static const String usersTable = 'users';
   static const String reservationsTable = 'reservations';
+  static const String favoritesTable = 'favorites';
 
   DatabaseHelper._privateConstructor();
   static final DatabaseHelper _instance = DatabaseHelper._privateConstructor();
@@ -73,6 +75,7 @@ class DatabaseHelper {
         path,
         version: _databaseVersion,
         onCreate: _onCreate,
+        onUpgrade: _onUpgrade,
         onOpen: (db) async {
           // Habilitar foreign keys
           await db.execute('PRAGMA foreign_keys = ON');
@@ -157,12 +160,49 @@ class DatabaseHelper {
       ''');
       print('Tabla de reservaciones creada');
 
+      // Crear tabla de favoritos (con FK a lugares)
+      await db.execute('''
+        CREATE TABLE $favoritesTable (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          place_id INTEGER NOT NULL UNIQUE,
+          notes TEXT,
+          tags TEXT,
+          added_at TEXT NOT NULL,
+          priority INTEGER DEFAULT 2,
+          notifications_enabled INTEGER DEFAULT 0,
+          FOREIGN KEY (place_id) REFERENCES $placesTable(id) ON DELETE CASCADE
+        )
+      ''');
+      print('Tabla de favoritos creada');
+
       // Insertar datos iniciales
       await _insertInitialData(db);
       print('Datos iniciales insertados');
     } catch (e) {
       print('Error al crear las tablas: $e');
       rethrow;
+    }
+  }
+
+  Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    print('Actualizando base de datos de versión $oldVersion a $newVersion');
+    
+    if (oldVersion < 2) {
+      // Agregar tabla favorites
+      print('Creando tabla favorites...');
+      await db.execute('''
+        CREATE TABLE $favoritesTable (
+          id INTEGER PRIMARY KEY AUTOINCREMENT,
+          place_id INTEGER UNIQUE NOT NULL,
+          notes TEXT,
+          tags TEXT,
+          added_at TEXT NOT NULL,
+          priority INTEGER DEFAULT 2,
+          notifications_enabled INTEGER DEFAULT 0,
+          FOREIGN KEY (place_id) REFERENCES $placesTable (id) ON DELETE CASCADE
+        )
+      ''');
+      print('Tabla favorites creada exitosamente');
     }
   }
 
@@ -578,6 +618,220 @@ class DatabaseHelper {
       orderBy: 'rating DESC',
     );
     return List.generate(maps.length, (i) => Place.fromMap(maps[i]));
+  }
+
+  // ============= CRUD DE FAVORITOS MEJORADO =============
+
+  /// Insertar favorito
+  Future<int> insertFavorite(Favorite favorite) async {
+    final db = await database;
+    return await db.insert(favoritesTable, favorite.toMap());
+  }
+
+  /// Obtener todos los favoritos con sus places
+  Future<List<Map<String, dynamic>>> getAllFavoritesWithPlaces() async {
+    final db = await database;
+    final List<Map<String, dynamic>> result = [];
+
+    // Query favoritos
+    final favoriteMaps = await db.query(
+      favoritesTable,
+      orderBy: 'added_at DESC',
+    );
+
+    for (var favoriteMap in favoriteMaps) {
+      final favorite = Favorite.fromMap(favoriteMap);
+      
+      // Query place correspondiente
+      final placeMaps = await db.query(
+        placesTable,
+        where: 'id = ?',
+        whereArgs: [favorite.placeId],
+        limit: 1,
+      );
+
+      if (placeMaps.isNotEmpty) {
+        result.add({
+          'favorite': favorite,
+          'place': Place.fromMap(placeMaps.first),
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /// Obtener favorito por ID
+  Future<Favorite?> getFavoriteById(int id) async {
+    final db = await database;
+    final maps = await db.query(
+      favoritesTable,
+      where: 'id = ?',
+      whereArgs: [id],
+      limit: 1,
+    );
+
+    if (maps.isEmpty) return null;
+    return Favorite.fromMap(maps.first);
+  }
+
+  /// Obtener favorito por place ID
+  Future<Favorite?> getFavoriteByPlaceId(int placeId) async {
+    final db = await database;
+    final maps = await db.query(
+      favoritesTable,
+      where: 'place_id = ?',
+      whereArgs: [placeId],
+      limit: 1,
+    );
+
+    if (maps.isEmpty) return null;
+    return Favorite.fromMap(maps.first);
+  }
+
+  /// Obtener favoritos por prioridad
+  Future<List<Map<String, dynamic>>> getFavoritesByPriority(int priority) async {
+    final db = await database;
+    final List<Map<String, dynamic>> result = [];
+
+    final favoriteMaps = await db.query(
+      favoritesTable,
+      where: 'priority = ?',
+      whereArgs: [priority],
+      orderBy: 'added_at DESC',
+    );
+
+    for (var favoriteMap in favoriteMaps) {
+      final favorite = Favorite.fromMap(favoriteMap);
+      
+      final placeMaps = await db.query(
+        placesTable,
+        where: 'id = ?',
+        whereArgs: [favorite.placeId],
+        limit: 1,
+      );
+
+      if (placeMaps.isNotEmpty) {
+        result.add({
+          'favorite': favorite,
+          'place': Place.fromMap(placeMaps.first),
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /// Obtener favoritos por tag
+  Future<List<Map<String, dynamic>>> getFavoritesByTag(String tag) async {
+    final db = await database;
+    final List<Map<String, dynamic>> result = [];
+
+    final favoriteMaps = await db.query(
+      favoritesTable,
+      where: 'tags LIKE ?',
+      whereArgs: ['%$tag%'],
+      orderBy: 'added_at DESC',
+    );
+
+    for (var favoriteMap in favoriteMaps) {
+      final favorite = Favorite.fromMap(favoriteMap);
+      
+      final placeMaps = await db.query(
+        placesTable,
+        where: 'id = ?',
+        whereArgs: [favorite.placeId],
+        limit: 1,
+      );
+
+      if (placeMaps.isNotEmpty) {
+        result.add({
+          'favorite': favorite,
+          'place': Place.fromMap(placeMaps.first),
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /// Buscar favoritos por notas
+  Future<List<Map<String, dynamic>>> searchFavoritesByNotes(String query) async {
+    final db = await database;
+    final List<Map<String, dynamic>> result = [];
+
+    final favoriteMaps = await db.query(
+      favoritesTable,
+      where: 'notes LIKE ?',
+      whereArgs: ['%$query%'],
+      orderBy: 'added_at DESC',
+    );
+
+    for (var favoriteMap in favoriteMaps) {
+      final favorite = Favorite.fromMap(favoriteMap);
+      
+      final placeMaps = await db.query(
+        placesTable,
+        where: 'id = ?',
+        whereArgs: [favorite.placeId],
+        limit: 1,
+      );
+
+      if (placeMaps.isNotEmpty) {
+        result.add({
+          'favorite': favorite,
+          'place': Place.fromMap(placeMaps.first),
+        });
+      }
+    }
+
+    return result;
+  }
+
+  /// Obtener todos los tags únicos
+  Future<List<String>> getAllFavoriteTags() async {
+    final db = await database;
+    final favoriteMaps = await db.query(favoritesTable);
+    
+    Set<String> allTags = {};
+    for (var map in favoriteMaps) {
+      final favorite = Favorite.fromMap(map);
+      allTags.addAll(favorite.getTagsList());
+    }
+
+    return allTags.toList()..sort();
+  }
+
+  /// Actualizar favorito
+  Future<int> updateFavorite(Favorite favorite) async {
+    final db = await database;
+    return await db.update(
+      favoritesTable,
+      favorite.toMap(),
+      where: 'id = ?',
+      whereArgs: [favorite.id],
+    );
+  }
+
+  /// Eliminar favorito por ID
+  Future<int> deleteFavorite(int id) async {
+    final db = await database;
+    return await db.delete(
+      favoritesTable,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+  }
+
+  /// Eliminar favorito por place ID
+  Future<bool> deleteFavoriteByPlaceId(int placeId) async {
+    final db = await database;
+    final count = await db.delete(
+      favoritesTable,
+      where: 'place_id = ?',
+      whereArgs: [placeId],
+    );
+    return count > 0;
   }
 
   // ============= UTILIDADES =============

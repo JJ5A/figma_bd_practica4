@@ -117,6 +117,30 @@ class FallbackData {
     return newId;
   }
 
+  static bool updatePlace(Place updatedPlace) {
+    List<Place> targetList =
+        updatedPlace.type == PlaceType.popular ? _popularPlaces : _nearbyPlaces;
+    final index = targetList.indexWhere((place) => place.id == updatedPlace.id);
+    if (index == -1) {
+      return false;
+    }
+    targetList[index] = updatedPlace;
+    return true;
+  }
+
+  static bool removePlace(int placeId) {
+    bool _removeFrom(List<Place> list) {
+      final index = list.indexWhere((place) => place.id == placeId);
+      if (index == -1) {
+        return false;
+      }
+      list.removeAt(index);
+      return true;
+    }
+
+    return _removeFrom(_popularPlaces) || _removeFrom(_nearbyPlaces);
+  }
+
   static List<Place> getAllPlaces() {
     return [...getPopularPlaces(), ...getNearbyPlaces()];
   }

@@ -21,6 +21,7 @@ class HomePage extends StatefulWidget {
 
 class _HomePageState extends State<HomePage> {
   int _currentIndex = 0;
+  static const Set<int> _protectedPopularPlaceIds = {1, 2, 3};
   
   // Services
   final CategoryService _categoryService = CategoryService();
@@ -125,7 +126,6 @@ class _HomePageState extends State<HomePage> {
   }
 
   void _onCategoryTap(Category category) {
-    // Aquí podrías filtrar lugares por categoría
     _showSuccessSnackBar('Categoría seleccionada: ${category.name}');
   }
 
@@ -139,30 +139,27 @@ class _HomePageState extends State<HomePage> {
   }
 
   Future<void> _onFavoriteTap(Place place) async {
+    final placeId = place.id;
+    if (placeId == null) return;
+
     try {
-      await _placeService.toggleFavorite(place.id!);
-      
-      // Actualizar el estado local
+      final wasFavorite = place.isFavorite;
+      await _placeService.toggleFavorite(placeId);
+
       setState(() {
-        // Actualizar en la lista popular
-        int popularIndex = _popularPlaces.indexWhere((p) => p.id == place.id);
-        if (popularIndex != -1) {
-          _popularPlaces[popularIndex] = place.copyWith(isFavorite: !place.isFavorite);
-        }
-        
-        // Actualizar en la lista nearby
-        int nearbyIndex = _nearbyPlaces.indexWhere((p) => p.id == place.id);
-        if (nearbyIndex != -1) {
-          _nearbyPlaces[nearbyIndex] = place.copyWith(isFavorite: !place.isFavorite);
-        }
+        _popularPlaces = _popularPlaces
+            .map((p) => p.id == placeId ? p.copyWith(isFavorite: !wasFavorite) : p)
+            .toList();
+        _nearbyPlaces = _nearbyPlaces
+            .map((p) => p.id == placeId ? p.copyWith(isFavorite: !wasFavorite) : p)
+            .toList();
       });
-      
-      String message = place.isFavorite 
-          ? 'Removido de favoritos' 
-          : 'Agregado a favoritos';
-      _showSuccessSnackBar(message);
+
+      _showSuccessSnackBar(
+        wasFavorite ? 'Removido de favoritos' : 'Agregado a favoritos',
+      );
     } catch (e) {
-      _showErrorSnackBar('Error al cambiar favorito: $e');
+      _showErrorSnackBar('Error: $e');
     }
   }
 
@@ -170,19 +167,128 @@ class _HomePageState extends State<HomePage> {
     await _loadData();
   }
 
-  void _showAddPlaceDialog(PlaceType placeType) {
-    final formKey = GlobalKey<FormState>();
-    final titleController = TextEditingController();
-    final subtitleController = TextEditingController();
-    final priceController = TextEditingController();
-    final ratingController = TextEditingController();
-    final descriptionController = TextEditingController();
-    final featuresController = TextEditingController();
+  Future<void> _showAddPlaceDialog(PlaceType placeType) async {
+    final formResult = await _showPlaceFormDialog(placeType: placeType);
+    if (formResult == null) return;
+    await _savePlaceFromForm(placeType: placeType, formResult: formResult);
+  }
 
-    showDialog(
+  Future<void> _onEditPlace(Place place) async {
+    if (_isProtectedPopularPlace(place)) {
+      _showErrorSnackBar('Los lugares por defecto no se pueden editar.');
+      return;
+    }
+
+    final formResult = await _showPlaceFormDialog(
+      placeType: place.type,
+      initialPlace: place,
+    );
+    if (formResult == null) return;
+
+    await _savePlaceFromForm(
+      placeType: place.type,
+      formResult: formResult,
+      existingPlace: place,
+    );
+  }
+
+  Future<void> _onDeletePlace(Place place) async {
+    if (_isProtectedPopularPlace(place)) {
+      _showErrorSnackBar('Los lugares por defecto no se pueden eliminar.');
+      return;
+    }
+
+    if (place.id == null) {
+      _showErrorSnackBar('No se puede eliminar un lugar sin ID.');
+      return;
+    }
+
+    final shouldDelete = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
-        title: Text('Agregar lugar ${placeType.name}'),
+        title: const Text('Eliminar lugar'),
+        content: Text('¿Deseas eliminar "${place.title}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, true),
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Eliminar'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldDelete != true) return;
+
+    try {
+      await _placeService.deletePlace(place.id!);
+      await _loadPlaces();
+      _showSuccessSnackBar('Lugar eliminado');
+    } catch (e) {
+      _showErrorSnackBar('Error al eliminar lugar: $e');
+    }
+  }
+
+  Future<void> _savePlaceFromForm({
+    required PlaceType placeType,
+    required _PlaceFormResult formResult,
+    Place? existingPlace,
+  }) async {
+    try {
+      final placeToSave = Place(
+        id: existingPlace?.id,
+        title: formResult.title,
+        subtitle: formResult.subtitle,
+        imageAsset: existingPlace?.imageAsset ?? _getDefaultImageForType(placeType),
+        price: formResult.price,
+        rating: formResult.rating,
+        type: placeType,
+        description: formResult.description,
+        features: formResult.features,
+      );
+
+      if (existingPlace == null) {
+        await _placeService.addPlace(placeToSave);
+        _showSuccessSnackBar('¡Lugar agregado exitosamente!');
+      } else {
+        await _placeService.updatePlace(placeToSave);
+        _showSuccessSnackBar('Lugar actualizado');
+      }
+
+      await _loadPlaces();
+    } catch (e) {
+      _showErrorSnackBar('Error al guardar lugar: $e');
+    }
+  }
+
+  Future<_PlaceFormResult?> _showPlaceFormDialog({
+    required PlaceType placeType,
+    Place? initialPlace,
+  }) {
+    final formKey = GlobalKey<FormState>();
+    final titleController = TextEditingController(text: initialPlace?.title ?? '');
+    final subtitleController = TextEditingController(text: initialPlace?.subtitle ?? '');
+    final priceController = TextEditingController(text: initialPlace?.price ?? '');
+    final ratingController = TextEditingController(
+      text: initialPlace != null ? initialPlace.rating.toString() : '',
+    );
+    final descriptionController = TextEditingController(text: initialPlace?.description ?? '');
+    final featuresController = TextEditingController(
+      text: initialPlace?.features?.join(', ') ?? '',
+    );
+
+    return showDialog<_PlaceFormResult>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text(
+          initialPlace == null
+              ? 'Agregar lugar ${placeType.name}'
+              : 'Editar ${initialPlace.title}',
+        ),
         content: SingleChildScrollView(
           child: Form(
             key: formKey,
@@ -195,7 +301,7 @@ class _HomePageState extends State<HomePage> {
                     labelText: 'Nombre del lugar',
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) => value?.isEmpty ?? true ? 'Campo requerido' : null,
+                  validator: (value) => value?.trim().isEmpty ?? true ? 'Campo requerido' : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -204,7 +310,7 @@ class _HomePageState extends State<HomePage> {
                     labelText: 'Ubicación',
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) => value?.isEmpty ?? true ? 'Campo requerido' : null,
+                  validator: (value) => value?.trim().isEmpty ?? true ? 'Campo requerido' : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -213,7 +319,7 @@ class _HomePageState extends State<HomePage> {
                     labelText: 'Precio (ej: Rp 300.000)',
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) => value?.isEmpty ?? true ? 'Campo requerido' : null,
+                  validator: (value) => value?.trim().isEmpty ?? true ? 'Campo requerido' : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -224,8 +330,8 @@ class _HomePageState extends State<HomePage> {
                     border: OutlineInputBorder(),
                   ),
                   validator: (value) {
-                    if (value?.isEmpty ?? true) return 'Campo requerido';
-                    final rating = double.tryParse(value!);
+                    if (value?.trim().isEmpty ?? true) return 'Campo requerido';
+                    final rating = double.tryParse(value!.trim());
                     if (rating == null || rating < 1.0 || rating > 5.0) {
                       return 'Rating debe ser entre 1.0 y 5.0';
                     }
@@ -240,7 +346,7 @@ class _HomePageState extends State<HomePage> {
                     labelText: 'Descripción',
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) => value?.isEmpty ?? true ? 'Campo requerido' : null,
+                  validator: (value) => value?.trim().isEmpty ?? true ? 'Campo requerido' : null,
                 ),
                 const SizedBox(height: 12),
                 TextFormField(
@@ -250,7 +356,7 @@ class _HomePageState extends State<HomePage> {
                     hintText: 'Free Wifi, Pool, Food',
                     border: OutlineInputBorder(),
                   ),
-                  validator: (value) => value?.isEmpty ?? true ? 'Campo requerido' : null,
+                  validator: (value) => value?.trim().isEmpty ?? true ? 'Campo requerido' : null,
                 ),
               ],
             ),
@@ -262,64 +368,43 @@ class _HomePageState extends State<HomePage> {
             child: const Text('Cancelar'),
           ),
           ElevatedButton(
-            onPressed: () async {
-              if (formKey.currentState!.validate()) {
-                await _addNewPlace(
-                  titleController.text,
-                  subtitleController.text,
-                  priceController.text,
-                  double.parse(ratingController.text),
-                  descriptionController.text,
-                  featuresController.text.split(',').map((e) => e.trim()).toList(),
-                  placeType,
-                );
-                Navigator.pop(context);
-              }
+            onPressed: () {
+              if (formKey.currentState?.validate() != true) return;
+              Navigator.pop(
+                context,
+                _PlaceFormResult(
+                  title: titleController.text.trim(),
+                  subtitle: subtitleController.text.trim(),
+                  price: priceController.text.trim(),
+                  rating: double.parse(ratingController.text.trim()),
+                  description: descriptionController.text.trim(),
+                  features: _parseFeatures(featuresController.text),
+                ),
+              );
             },
             style: ElevatedButton.styleFrom(
               backgroundColor: const Color(0xFF22B07D),
               foregroundColor: Colors.white,
             ),
-            child: const Text('Agregar'),
+            child: Text(initialPlace == null ? 'Agregar' : 'Guardar cambios'),
           ),
         ],
       ),
     );
   }
 
-  Future<void> _addNewPlace(
-    String title,
-    String subtitle,
-    String price,
-    double rating,
-    String description,
-    List<String> features,
-    PlaceType placeType,
-  ) async {
-    try {
-      // Crear el nuevo lugar
-      Place newPlace = Place(
-        title: title,
-        subtitle: subtitle,
-        imageAsset: _getDefaultImageForType(placeType),
-        price: price,
-        rating: rating,
-        type: placeType,
-        description: description,
-        features: features,
-      );
+  List<String> _parseFeatures(String raw) {
+    return raw
+        .split(',')
+        .map((e) => e.trim())
+        .where((element) => element.isNotEmpty)
+        .toList();
+  }
 
-      // Agregarlo a la base de datos
-      await _placeService.addPlace(newPlace);
-
-      // Recargar los datos para mostrar el nuevo lugar
-      await _loadPlaces();
-
-      // Mostrar mensaje de éxito
-      _showSuccessSnackBar('¡Lugar agregado exitosamente!');
-    } catch (e) {
-      _showErrorSnackBar('Error al agregar lugar: $e');
-    }
+  bool _isProtectedPopularPlace(Place place) {
+    final placeId = place.id;
+    if (placeId == null) return false;
+    return place.type == PlaceType.popular && _protectedPopularPlaceIds.contains(placeId);
   }
 
   String _getDefaultImageForType(PlaceType type) {
@@ -392,117 +477,123 @@ class _HomePageState extends State<HomePage> {
               const SizedBox(height: 20),
 
               // Categories section
-              if (_isLoadingCategories)
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(20),
-                    child: CircularProgressIndicator(
-                      color: Color(0xFF22B07D),
+              _isLoadingCategories
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF22B07D),
+                        ),
+                      ),
+                    )
+                  : CategorySection(
+                      categories: _categories,
+                      onCategoryTap: _onCategoryTap,
                     ),
-                  ),
-                )
-              else
-                CategorySection(
-                  categories: _categories,
-                  onCategoryTap: _onCategoryTap,
-                ),
+
+              const SizedBox(height: 20),
 
               // Popular section
-              if (_isLoadingPlaces)
-                const Center(
-                  child: Padding(
-                    padding: EdgeInsets.all(20),
-                    child: CircularProgressIndicator(
-                      color: Color(0xFF22B07D),
-                    ),
-                  ),
-                )
-              else
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Popular',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          ElevatedButton.icon(
-                            onPressed: () => _showAddPlaceDialog(PlaceType.popular),
-                            icon: const Icon(Icons.add, size: 16),
-                            label: const Text('Agregar'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF22B07D),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              minimumSize: const Size(0, 32),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
-                              ),
-                            ),
-                          ),
-                        ],
+              _isLoadingPlaces
+                  ? const Center(
+                      child: Padding(
+                        padding: EdgeInsets.all(20),
+                        child: CircularProgressIndicator(
+                          color: Color(0xFF22B07D),
+                        ),
                       ),
+                    )
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Popular',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              ElevatedButton.icon(
+                                onPressed: () => _showAddPlaceDialog(PlaceType.popular),
+                                icon: const Icon(Icons.add, size: 16),
+                                label: const Text('Agregar'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF22B07D),
+                                  foregroundColor: Colors.white,
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  minimumSize: const Size(0, 32),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        const SizedBox(height: 12),
+                        PopularSection(
+                          popularPlaces: _popularPlaces,
+                          onPlaceTap: _onPlaceTap,
+                          onFavoriteTap: _onFavoriteTap,
+                          onEditPlace: _onEditPlace,
+                          onDeletePlace: _onDeletePlace,
+                          isPlaceProtected: _isProtectedPopularPlace,
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 12),
-                    PopularSection(
-                      popularPlaces: _popularPlaces,
-                      onPlaceTap: _onPlaceTap,
-                      onFavoriteTap: _onFavoriteTap,
-                    ),
-                  ],
-                ),
 
               const SizedBox(height: 20),
 
               // Nearby section
-              if (!_isLoadingPlaces)
-                Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 20),
-                      child: Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          const Text(
-                            'Nearby',
-                            style: TextStyle(
-                              fontSize: 20,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                          ElevatedButton.icon(
-                            onPressed: () => _showAddPlaceDialog(PlaceType.nearby),
-                            icon: const Icon(Icons.add, size: 16),
-                            label: const Text('Agregar'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF22B07D),
-                              foregroundColor: Colors.white,
-                              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-                              minimumSize: const Size(0, 32),
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(16),
+              _isLoadingPlaces
+                  ? const SizedBox.shrink()
+                  : Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Padding(
+                          padding: const EdgeInsets.symmetric(horizontal: 20),
+                          child: Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              const Text(
+                                'Nearby',
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.bold,
+                                ),
                               ),
-                            ),
+                              ElevatedButton.icon(
+                                onPressed: () => _showAddPlaceDialog(PlaceType.nearby),
+                                icon: const Icon(Icons.add, size: 16),
+                                label: const Text('Agregar'),
+                                style: ElevatedButton.styleFrom(
+                                  backgroundColor: const Color(0xFF22B07D),
+                                  foregroundColor: Colors.white,
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                                  minimumSize: const Size(0, 32),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(16),
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
-                        ],
-                      ),
+                        ),
+                        const SizedBox(height: 12),
+                        NearbySection(
+                          nearbyPlaces: _nearbyPlaces,
+                          onPlaceTap: _onPlaceTap,
+                          onFavoriteTap: _onFavoriteTap,
+                        ),
+                      ],
                     ),
-                    const SizedBox(height: 12),
-                    NearbySection(
-                      nearbyPlaces: _nearbyPlaces,
-                      onPlaceTap: _onPlaceTap,
-                      onFavoriteTap: _onFavoriteTap,
-                    ),
-                  ],
-                ),
             ],
           ),
         ),
@@ -569,4 +660,22 @@ class _HomePageState extends State<HomePage> {
       ),
     );
   }
+}
+
+class _PlaceFormResult {
+  final String title;
+  final String subtitle;
+  final String price;
+  final double rating;
+  final String description;
+  final List<String> features;
+
+  const _PlaceFormResult({
+    required this.title,
+    required this.subtitle,
+    required this.price,
+    required this.rating,
+    required this.description,
+    required this.features,
+  });
 }

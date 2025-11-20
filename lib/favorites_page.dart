@@ -1,7 +1,7 @@
 import 'package:flutter/material.dart';
+import 'detail.dart';
 import 'models/place.dart';
 import 'services/place_service.dart';
-import 'detail.dart';
 
 class FavoritesPage extends StatefulWidget {
   const FavoritesPage({super.key});
@@ -12,13 +12,23 @@ class FavoritesPage extends StatefulWidget {
 
 class _FavoritesPageState extends State<FavoritesPage> {
   final PlaceService _placeService = PlaceService();
-  List<Place> _favoritePlaces = [];
+  final TextEditingController _searchController = TextEditingController();
+
+  List<Place> _favorites = [];
+  List<Place> _filteredFavorites = [];
   bool _isLoading = true;
 
   @override
   void initState() {
     super.initState();
     _loadFavorites();
+    _searchController.addListener(_onSearchChanged);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    super.dispose();
   }
 
   Future<void> _loadFavorites() async {
@@ -26,16 +36,62 @@ class _FavoritesPageState extends State<FavoritesPage> {
       setState(() => _isLoading = true);
       final favorites = await _placeService.getFavoritePlaces();
       setState(() {
-        _favoritePlaces = favorites;
+        _favorites = favorites;
+        _applySearch();
         _isLoading = false;
       });
     } catch (e) {
       setState(() => _isLoading = false);
-      _showErrorSnackBar('Error al cargar favoritos: $e');
+      _showError('Error al cargar favoritos: $e');
     }
   }
 
-  void _showErrorSnackBar(String message) {
+  void _onSearchChanged() => _applySearch();
+
+  void _applySearch() {
+    final query = _searchController.text.trim().toLowerCase();
+    setState(() {
+      if (query.isEmpty) {
+        _filteredFavorites = List.from(_favorites);
+      } else {
+        _filteredFavorites = _favorites
+            .where((place) =>
+                place.title.toLowerCase().contains(query) ||
+                place.subtitle.toLowerCase().contains(query))
+            .toList();
+      }
+    });
+  }
+
+  Future<void> _toggleFavorite(Place place) async {
+    final placeId = place.id;
+    if (placeId == null) return;
+
+    try {
+      await _placeService.toggleFavorite(placeId);
+      await _loadFavorites();
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            place.isFavorite ? 'Removido de favoritos' : 'Agregado a favoritos',
+          ),
+          duration: const Duration(seconds: 2),
+        ),
+      );
+    } catch (e) {
+      _showError('Error al actualizar favorito: $e');
+    }
+  }
+
+  void _onPlaceTap(Place place) {
+    Navigator.push(
+      context,
+      MaterialPageRoute(builder: (_) => Detailed(place: place)),
+    ).then((_) => _loadFavorites());
+  }
+
+  void _showError(String message) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
@@ -45,41 +101,7 @@ class _FavoritesPageState extends State<FavoritesPage> {
     );
   }
 
-  void _showSuccessSnackBar(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(message),
-        backgroundColor: const Color(0xFF22B07D),
-        duration: const Duration(seconds: 2),
-      ),
-    );
-  }
-
-  void _onPlaceTap(Place place) {
-    Navigator.push(
-      context,
-      MaterialPageRoute(
-        builder: (_) => Detailed(place: place),
-      ),
-    );
-  }
-
-  Future<void> _onFavoriteTap(Place place) async {
-    try {
-      await _placeService.toggleFavorite(place.id!);
-      
-      // Remover de la lista de favoritos
-      setState(() {
-        _favoritePlaces.removeWhere((p) => p.id == place.id);
-      });
-      
-      _showSuccessSnackBar('Removido de favoritos');
-    } catch (e) {
-      _showErrorSnackBar('Error al cambiar favorito: $e');
-    }
-  }
-
-  Future<void> _refreshFavorites() async {
+  Future<void> _onRefresh() async {
     await _loadFavorites();
   }
 
@@ -90,133 +112,114 @@ class _FavoritesPageState extends State<FavoritesPage> {
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
-        centerTitle: true,
-        title: const Text(
-          'Mis Favoritos',
-          style: TextStyle(
-            color: Colors.black,
-            fontSize: 24,
-            fontWeight: FontWeight.w700,
-          ),
-        ),
         leading: IconButton(
           icon: const Icon(Icons.arrow_back_ios, color: Colors.black),
           onPressed: () => Navigator.pop(context),
         ),
+        title: const Text(
+          'Mis favoritos',
+          style: TextStyle(
+            color: Colors.black,
+            fontWeight: FontWeight.w700,
+          ),
+        ),
+        centerTitle: true,
       ),
       body: RefreshIndicator(
-        onRefresh: _refreshFavorites,
+        onRefresh: _onRefresh,
         color: const Color(0xFF22B07D),
         child: _isLoading
             ? const Center(
-                child: CircularProgressIndicator(
-                  color: Color(0xFF22B07D),
-                ),
+                child: CircularProgressIndicator(color: Color(0xFF22B07D)),
               )
-            : _favoritePlaces.isEmpty
-                ? _buildEmptyState()
-                : _buildFavoritesList(),
+            : _buildContent(),
       ),
     );
   }
 
-  Widget _buildEmptyState() {
-    return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
+  Widget _buildContent() {
+    if (_filteredFavorites.isEmpty) {
+      return ListView(
+        padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 40),
         children: [
-          Icon(
-            Icons.favorite_border,
-            size: 100,
-            color: Colors.grey[400],
-          ),
-          const SizedBox(height: 20),
+          _buildSearchBar(),
+          const SizedBox(height: 40),
+          Icon(Icons.favorite_border, size: 100, color: Colors.grey.shade400),
+          const SizedBox(height: 16),
           Text(
             'No tienes favoritos aún',
-            style: TextStyle(
-              fontSize: 24,
-              fontWeight: FontWeight.w600,
-              color: Colors.grey[600],
-            ),
-          ),
-          const SizedBox(height: 10),
-          Text(
-            'Explora lugares y agrega algunos a tus favoritos',
-            style: TextStyle(
-              fontSize: 16,
-              color: Colors.grey[500],
-            ),
             textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.w600,
+              color: Colors.grey.shade700,
+            ),
           ),
-          const SizedBox(height: 30),
-          ElevatedButton(
-            onPressed: () => Navigator.pop(context),
-            style: ElevatedButton.styleFrom(
-              backgroundColor: const Color(0xFF22B07D),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 32, vertical: 12),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(25),
-              ),
-            ),
-            child: const Text(
-              'Explorar Lugares',
-              style: TextStyle(
-                fontSize: 16,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
+          const SizedBox(height: 8),
+          Text(
+            'Toca el corazón en un lugar para guardarlo aquí.',
+            textAlign: TextAlign.center,
+            style: TextStyle(color: Colors.grey.shade500),
           ),
         ],
-      ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(20),
+      itemCount: _filteredFavorites.length + 1,
+      itemBuilder: (context, index) {
+        if (index == 0) {
+          return Padding(
+            padding: const EdgeInsets.only(bottom: 16),
+            child: _buildSearchBar(),
+          );
+        }
+
+        final place = _filteredFavorites[index - 1];
+        return Padding(
+          padding: const EdgeInsets.only(bottom: 16),
+          child: _FavoritePlaceCard(
+            place: place,
+            onTap: () => _onPlaceTap(place),
+            onFavoriteTap: () => _toggleFavorite(place),
+          ),
+        );
+      },
     );
   }
 
-  Widget _buildFavoritesList() {
-    return ListView(
-      padding: const EdgeInsets.all(20),
-      children: [
-        Text(
-          '${_favoritePlaces.length} lugar${_favoritePlaces.length != 1 ? 'es' : ''} favorito${_favoritePlaces.length != 1 ? 's' : ''}',
-          style: const TextStyle(
-            fontSize: 18,
-            fontWeight: FontWeight.w600,
-            color: Colors.black87,
-          ),
+  Widget _buildSearchBar() {
+    return TextField(
+      controller: _searchController,
+      decoration: InputDecoration(
+        hintText: 'Buscar en favoritos',
+        prefixIcon: const Icon(Icons.search_rounded),
+        suffixIcon: _searchController.text.isNotEmpty
+            ? IconButton(
+                icon: const Icon(Icons.clear),
+                onPressed: () {
+                  _searchController.clear();
+                },
+              )
+            : null,
+        filled: true,
+        fillColor: const Color(0xFFF5F6F8),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(26),
+          borderSide: BorderSide.none,
         ),
-        const SizedBox(height: 20),
-        
-        // Grid de favoritos
-        GridView.builder(
-          shrinkWrap: true,
-          physics: const NeverScrollableScrollPhysics(),
-          gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-            crossAxisCount: 2,
-            childAspectRatio: 0.75,
-            crossAxisSpacing: 16,
-            mainAxisSpacing: 16,
-          ),
-          itemCount: _favoritePlaces.length,
-          itemBuilder: (context, index) {
-            final place = _favoritePlaces[index];
-            return _FavoriteCard(
-              place: place,
-              onTap: () => _onPlaceTap(place),
-              onFavoriteTap: () => _onFavoriteTap(place),
-            );
-          },
-        ),
-      ],
+      ),
     );
   }
 }
 
-class _FavoriteCard extends StatelessWidget {
+class _FavoritePlaceCard extends StatelessWidget {
   final Place place;
   final VoidCallback onTap;
   final VoidCallback onFavoriteTap;
 
-  const _FavoriteCard({
+  const _FavoritePlaceCard({
     required this.place,
     required this.onTap,
     required this.onFavoriteTap,
@@ -228,140 +231,123 @@ class _FavoriteCard extends StatelessWidget {
       onTap: onTap,
       child: Container(
         decoration: BoxDecoration(
-          borderRadius: BorderRadius.circular(16),
-          boxShadow: [
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          boxShadow: const [
             BoxShadow(
-              color: Colors.black.withOpacity(0.1),
-              blurRadius: 8,
-              offset: const Offset(0, 4),
+              color: Color(0x14000000),
+              blurRadius: 18,
+              offset: Offset(0, 8),
             ),
           ],
         ),
-        child: ClipRRect(
-          borderRadius: BorderRadius.circular(16),
-          child: Stack(
-            children: [
-              // Imagen de fondo
-              Image.asset(
-                place.imageAsset,
-                height: double.infinity,
-                width: double.infinity,
-                fit: BoxFit.cover,
-                errorBuilder: (context, error, stackTrace) {
-                  return Container(
-                    height: double.infinity,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            ClipRRect(
+              borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
+              child: Stack(
+                children: [
+                  Image.asset(
+                    place.imageAsset,
+                    height: 160,
                     width: double.infinity,
-                    color: Colors.grey[300],
-                    child: const Icon(
-                      Icons.image_not_supported,
-                      size: 40,
-                      color: Colors.grey,
-                    ),
-                  );
-                },
-              ),
-              
-              // Gradiente
-              Container(
-                decoration: const BoxDecoration(
-                  gradient: LinearGradient(
-                    begin: Alignment.topCenter,
-                    end: Alignment.bottomCenter,
-                    colors: [Colors.transparent, Colors.black54],
+                    fit: BoxFit.cover,
+                    errorBuilder: (context, error, stackTrace) {
+                      return Container(
+                        height: 160,
+                        color: Colors.grey.shade300,
+                        child: const Icon(Icons.image_not_supported, size: 48),
+                      );
+                    },
                   ),
-                ),
-              ),
-              
-              // Botón de favorito
-              Positioned(
-                top: 8,
-                right: 8,
-                child: GestureDetector(
-                  onTap: onFavoriteTap,
-                  child: Container(
-                    padding: const EdgeInsets.all(6),
-                    decoration: BoxDecoration(
-                      color: Colors.white.withOpacity(0.9),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(
-                      Icons.favorite,
-                      color: Colors.red,
-                      size: 20,
-                    ),
-                  ),
-                ),
-              ),
-              
-              // Rating
-              Positioned(
-                top: 8,
-                left: 8,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF22B07D),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Icon(Icons.star, color: Colors.white, size: 12),
-                      const SizedBox(width: 2),
-                      Text(
-                        place.rating.toStringAsFixed(1),
-                        style: const TextStyle(
+                  Positioned(
+                    top: 12,
+                    right: 12,
+                    child: GestureDetector(
+                      onTap: onFavoriteTap,
+                      child: Container(
+                        padding: const EdgeInsets.all(8),
+                        decoration: const BoxDecoration(
                           color: Colors.white,
-                          fontWeight: FontWeight.bold,
-                          fontSize: 12,
+                          shape: BoxShape.circle,
+                        ),
+                        child: const Icon(
+                          Icons.favorite,
+                          color: Colors.red,
+                          size: 20,
+                        ),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    place.title,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.w700,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Row(
+                    children: [
+                      const Icon(Icons.location_on_rounded, size: 16, color: Colors.grey),
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          place.subtitle,
+                          style: const TextStyle(color: Colors.grey),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
                         ),
                       ),
                     ],
                   ),
-                ),
+                  const SizedBox(height: 12),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        place.price,
+                        style: const TextStyle(
+                          color: Color(0xFF22B07D),
+                          fontWeight: FontWeight.w800,
+                          fontSize: 16,
+                        ),
+                      ),
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                        decoration: BoxDecoration(
+                          color: const Color(0x2622B07D),
+                          borderRadius: BorderRadius.circular(18),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.star_rounded, size: 16, color: Color(0xFF22B07D)),
+                            const SizedBox(width: 4),
+                            Text(
+                              place.rating.toStringAsFixed(1),
+                              style: const TextStyle(
+                                color: Color(0xFF22B07D),
+                                fontWeight: FontWeight.w700,
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
               ),
-              
-              // Información en la parte inferior
-              Positioned(
-                left: 8,
-                right: 8,
-                bottom: 8,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      place.title,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.w700,
-                        fontSize: 14,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    Text(
-                      place.subtitle,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 10,
-                      ),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      place.price,
-                      style: const TextStyle(
-                        color: Color(0xFF22B07D),
-                        fontWeight: FontWeight.w700,
-                        fontSize: 12,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ],
-          ),
+            ),
+          ],
         ),
       ),
     );

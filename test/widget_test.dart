@@ -7,24 +7,27 @@
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 import 'package:figmahotels/main.dart';
+import 'package:figmahotels/home_page.dart';
 
 void main() {
-  testWidgets('Counter increments smoke test', (WidgetTester tester) async {
-    // Build our app and trigger a frame.
+  sqfliteFfiInit();
+  databaseFactory = databaseFactoryFfi;
+
+  testWidgets('Splash screen shows primary CTA', (WidgetTester tester) async {
     await tester.pumpWidget(const MyApp());
 
-    // Verify that our counter starts at 0.
-    expect(find.text('0'), findsOneWidget);
-    expect(find.text('1'), findsNothing);
+    expect(find.text('Sign in'), findsOneWidget);
+    expect(find.text('Create Account'), findsOneWidget);
+  });
 
-    // Tap the '+' icon and trigger a frame.
-    await tester.tap(find.byIcon(Icons.add));
-    await tester.pump();
+  testWidgets('Home page renders primary sections', (WidgetTester tester) async {
+    await tester.pumpWidget(const MaterialApp(home: HomePage()));
+    await tester.pump(const Duration(milliseconds: 100));
 
-    // Verify that our counter has incremented.
-    expect(find.text('0'), findsNothing);
-    expect(find.text('1'), findsOneWidget);
+    expect(find.text('Popular'), findsWidgets);
+    expect(find.text('Nearby'), findsOneWidget);
   });
 }

@@ -5,7 +5,7 @@ import '../data/fallback_data.dart';
 class PlaceService {
   final DatabaseHelper _databaseHelper = DatabaseHelper.instance;
   bool _useFallbackData = false;
-  List<Place> _fallbackFavorites = [];
+  final List<Place> _fallbackFavorites = [];
 
   // Obtener lugares populares
   Future<List<Place>> getPopularPlaces() async {
@@ -249,39 +249,73 @@ class PlaceService {
     return null; // Sin errores
   }
 
-  // Agregar un nuevo lugar
-  Future<void> addPlace(Place place) async {
+  // Crear un nuevo lugar y devolver su ID
+  Future<int> createPlace(Place place) async {
+    final validationError = validatePlace(place);
+    if (validationError != null) {
+      throw Exception('Error de validación: $validationError');
+    }
+
     try {
       if (_useFallbackData) {
-        // Si estamos usando datos de fallback, agregamos a la lista temporal
-        if (place.type == PlaceType.popular) {
-          FallbackData.getPopularPlaces().add(place);
-        } else {
-          FallbackData.getNearbyPlaces().add(place);
+        final id = FallbackData.addPlace(place);
+        return id;
+      }
+
+      final placeId = await _databaseHelper.insertPlace(place);
+      return placeId;
+    } catch (e) {
+      print('Error al crear lugar: $e');
+      _useFallbackData = true;
+      final fallbackId = FallbackData.addPlace(place);
+      print('Lugar agregado en modo fallback con ID $fallbackId');
+      return fallbackId;
+    }
+  }
+
+  // Agregar un nuevo lugar
+  Future<void> addPlace(Place place) async {
+    await createPlace(place);
+  }
+
+  Future<void> updatePlace(Place place) async {
+    final validationError = validatePlace(place);
+    if (validationError != null) {
+      throw Exception('Error de validación: $validationError');
+    }
+
+    try {
+      if (_useFallbackData) {
+        final updated = FallbackData.updatePlace(place);
+        if (!updated) {
+          throw Exception('No se encontró el lugar en datos fallback');
         }
-        print('Lugar agregado a datos temporales (modo fallback)');
         return;
       }
 
-      // Validar el lugar antes de agregarlo
-      String? validationError = validatePlace(place);
-      if (validationError != null) {
-        throw Exception('Error de validación: $validationError');
+      await _databaseHelper.updatePlace(place);
+    } catch (e) {
+      print('Error al actualizar lugar: $e');
+      _useFallbackData = true;
+      final updated = FallbackData.updatePlace(place);
+      if (!updated) {
+        throw Exception('No se pudo actualizar el lugar en modo fallback');
+      }
+    }
+  }
+
+  Future<void> deletePlace(int placeId) async {
+    try {
+      if (_useFallbackData) {
+        FallbackData.removePlace(placeId);
+        return;
       }
 
-      // Agregar a la base de datos
-      await _databaseHelper.insertPlace(place);
-      print('Lugar agregado a la base de datos: ${place.title}');
+      await _databaseHelper.deletePlace(placeId);
     } catch (e) {
-      print('Error al agregar lugar: $e');
-      // Si falla la base de datos, intentar con fallback
+      print('Error al eliminar lugar: $e');
       _useFallbackData = true;
-      if (place.type == PlaceType.popular) {
-        FallbackData.getPopularPlaces().add(place);
-      } else {
-        FallbackData.getNearbyPlaces().add(place);
-      }
-      print('Lugar agregado a datos temporales debido a error en BD');
+      FallbackData.removePlace(placeId);
     }
   }
 }

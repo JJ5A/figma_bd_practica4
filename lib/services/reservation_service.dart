@@ -153,6 +153,15 @@ class ReservationService {
       
       // Simple calculation: price per night * number of nights
       double totalPrice = pricePerNight * nights;
+
+      const int includedGuests = 2;
+      const double extraGuestFeePerNight = 50000.0;
+      if (guests > includedGuests) {
+        final extraGuests = guests - includedGuests;
+        final extraFee = extraGuests * extraGuestFeePerNight * nights;
+        totalPrice += extraFee;
+        print('Applied extra guest fee: $extraFee for $extraGuests extra guest(s)');
+      }
       
       print('Total price calculated: $totalPrice (for $guests guests)');
       

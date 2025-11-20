@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'map.dart';
 import 'models/place.dart';
+import 'models/favorite.dart';
+import 'services/favorite_service.dart';
 import 'widgets/booking_form_screen.dart';
 
 class Detailed extends StatefulWidget {
@@ -16,7 +18,172 @@ class Detailed extends StatefulWidget {
 }
 
 class _DetailedState extends State<Detailed> {
-  bool isFavorite = false;
+  final FavoriteService _favoriteService = FavoriteService();
+  bool _isFavorite = false;
+  bool _isLoading = true;
+  Favorite? _currentFavorite;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFavoriteStatus();
+  }
+
+  Future<void> _loadFavoriteStatus() async {
+    try {
+      final favorite = await _favoriteService.getFavoriteByPlaceId(widget.place.id!);
+      setState(() {
+        _isFavorite = favorite != null;
+        _currentFavorite = favorite;
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() => _isLoading = false);
+    }
+  }
+
+  Future<void> _toggleFavorite() async {
+    try {
+      if (_isFavorite && _currentFavorite != null) {
+        // Remover de favoritos usando el placeId
+        await _favoriteService.removeFromFavorites(widget.place.id!);
+        setState(() {
+          _isFavorite = false;
+          _currentFavorite = null;
+        });
+        _showSnackBar('Removido de favoritos', Colors.red);
+      } else {
+        // Agregar a favoritos con diálogo
+        await _showAddToFavoritesDialog();
+      }
+    } catch (e) {
+      _showSnackBar('Error: $e', Colors.red);
+    }
+  }
+
+  Future<void> _showAddToFavoritesDialog() async {
+    final notesController = TextEditingController();
+    final tagsController = TextEditingController();
+    int selectedPriority = 2;
+    bool notificationsEnabled = false;
+
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => StatefulBuilder(
+        builder: (context, setDialogState) => AlertDialog(
+          title: const Text('Agregar a Favoritos'),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                TextField(
+                  controller: notesController,
+                  decoration: const InputDecoration(
+                    labelText: 'Notas (opcional)',
+                    hintText: 'Agrega notas personales...',
+                    border: OutlineInputBorder(),
+                  ),
+                  maxLines: 3,
+                ),
+                const SizedBox(height: 16),
+                TextField(
+                  controller: tagsController,
+                  decoration: const InputDecoration(
+                    labelText: 'Tags (opcional)',
+                    hintText: 'playa, familiar, económico',
+                    border: OutlineInputBorder(),
+                  ),
+                ),
+                const SizedBox(height: 16),
+                const Text('Prioridad:', style: TextStyle(fontWeight: FontWeight.w600)),
+                const SizedBox(height: 8),
+                Row(
+                  children: [1, 2, 3].map((priority) {
+                    String label = priority == 1 ? 'Alta' : priority == 2 ? 'Media' : 'Baja';
+                    return Expanded(
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(horizontal: 4),
+                        child: ChoiceChip(
+                          label: Text(label),
+                          selected: selectedPriority == priority,
+                          onSelected: (selected) {
+                            setDialogState(() {
+                              selectedPriority = priority;
+                            });
+                          },
+                          selectedColor: priority == 1 
+                              ? Colors.red.shade100 
+                              : priority == 2 
+                                  ? Colors.orange.shade100 
+                                  : Colors.green.shade100,
+                        ),
+                      ),
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 16),
+                SwitchListTile(
+                  title: const Text('Notificaciones'),
+                  value: notificationsEnabled,
+                  onChanged: (value) {
+                    setDialogState(() {
+                      notificationsEnabled = value;
+                    });
+                  },
+                  activeThumbColor: const Color(0xFF22B07D),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(context, false),
+              child: const Text('Cancelar'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(context, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: const Color(0xFF22B07D),
+              ),
+              child: const Text('Agregar'),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (result == true) {
+      try {
+        final favoriteId = await _favoriteService.addToFavorites(
+          placeId: widget.place.id!,
+          notes: notesController.text.trim().isEmpty ? null : notesController.text.trim(),
+          tags: tagsController.text.trim().isEmpty ? null : tagsController.text.trim(),
+          priority: selectedPriority,
+          notificationsEnabled: notificationsEnabled,
+        );
+        
+        final newFavorite = await _favoriteService.getFavoriteById(favoriteId);
+        setState(() {
+          _isFavorite = true;
+          _currentFavorite = newFavorite;
+        });
+        _showSnackBar('Agregado a favoritos', const Color(0xFF22B07D));
+      } catch (e) {
+        _showSnackBar('Error al agregar: $e', Colors.red);
+      }
+    }
+  }
+
+  void _showSnackBar(String message, Color color) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(message),
+        backgroundColor: color,
+        duration: const Duration(seconds: 2),
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -139,16 +306,25 @@ class _DetailedState extends State<Detailed> {
                                   const SizedBox(width: 4),
                                   // Corazón dentro de la misma caja
                                   GestureDetector(
-                                    onTap: () => setState(
-                                      () => isFavorite = !isFavorite,
-                                    ),
-                                    child: Icon(
-                                      Icons.favorite,
-                                      color: isFavorite
-                                          ? Colors.red
-                                          : Colors.grey,
-                                      size: 30,
-                                    ),
+                                    onTap: _isLoading ? null : _toggleFavorite,
+                                    child: _isLoading
+                                        ? const SizedBox(
+                                            width: 30,
+                                            height: 30,
+                                            child: CircularProgressIndicator(
+                                              strokeWidth: 2,
+                                              valueColor: AlwaysStoppedAnimation<Color>(
+                                                Color(0xFF22B07D),
+                                              ),
+                                            ),
+                                          )
+                                        : Icon(
+                                            Icons.favorite,
+                                            color: _isFavorite
+                                                ? Colors.red
+                                                : Colors.grey,
+                                            size: 30,
+                                          ),
                                   ),
                                 ],
                               ),
@@ -312,10 +488,7 @@ class _DetailedState extends State<Detailed> {
                     context,
                     MaterialPageRoute(
                       builder: (context) => Map(
-                        title: widget.place.title,
-                        location: widget.place.subtitle,
-                        asset: widget.place.imageAsset,
-                        rating: widget.place.rating,
+                        place: widget.place,
                       ),
                     ),
                   );

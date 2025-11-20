@@ -15,6 +15,9 @@ void main() async {
 
 Future<void> _initializeDatabase() async {
   try {
+    // TEMPORAL: Descomentar la siguiente línea SOLO UNA VEZ para recrear la BD
+    // await DatabaseHelper.instance.resetDatabase();
+    
     // Intentar inicializar la base de datos
     final db = await DatabaseHelper.instance.database;
     print('Base de datos inicializada correctamente en: ${db.path}');

@@ -5,12 +5,18 @@ class PopularSection extends StatelessWidget {
   final List<Place> popularPlaces;
   final Function(Place)? onPlaceTap;
   final Function(Place)? onFavoriteTap;
+  final Function(Place)? onEditPlace;
+  final Function(Place)? onDeletePlace;
+  final bool Function(Place)? isPlaceProtected;
 
   const PopularSection({
     super.key,
     required this.popularPlaces,
     this.onPlaceTap,
     this.onFavoriteTap,
+    this.onEditPlace,
+    this.onDeletePlace,
+    this.isPlaceProtected,
   });
 
   @override
@@ -18,7 +24,6 @@ class PopularSection extends StatelessWidget {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const _SectionTitle('Popular'),
         SizedBox(
           height: 210,
           child: ListView.separated(
@@ -28,12 +33,18 @@ class PopularSection extends StatelessWidget {
             separatorBuilder: (_, __) => const SizedBox(width: 16),
             itemBuilder: (context, i) {
               final place = popularPlaces[i];
+              final isFavorite = place.isFavorite;
+              final protected = isPlaceProtected?.call(place) ?? false;
               return InkWell(
                 borderRadius: BorderRadius.circular(16),
                 onTap: () => onPlaceTap?.call(place),
                 child: PopularCard(
                   place: place,
+                  isFavorite: isFavorite,
                   onFavoriteTap: onFavoriteTap,
+                  onEditPlace: onEditPlace,
+                  onDeletePlace: onDeletePlace,
+                  isProtected: protected,
                 ),
               );
             },
@@ -47,12 +58,20 @@ class PopularSection extends StatelessWidget {
 
 class PopularCard extends StatelessWidget {
   final Place place;
+  final bool isFavorite;
   final Function(Place)? onFavoriteTap;
+  final Function(Place)? onEditPlace;
+  final Function(Place)? onDeletePlace;
+  final bool isProtected;
 
   const PopularCard({
     super.key,
     required this.place,
+    required this.isFavorite,
     this.onFavoriteTap,
+    this.onEditPlace,
+    this.onDeletePlace,
+    this.isProtected = false,
   });
 
   @override
@@ -127,20 +146,48 @@ class PopularCard extends StatelessWidget {
           Positioned(
             right: 8,
             top: 8,
-            child: GestureDetector(
-              onTap: () => onFavoriteTap?.call(place),
-              child: Container(
-                padding: const EdgeInsets.all(6),
-                decoration: BoxDecoration(
-                  color: Colors.white.withOpacity(0.9),
-                  shape: BoxShape.circle,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                GestureDetector(
+                  onTap: () => onFavoriteTap?.call(place),
+                  child: Container(
+                    padding: const EdgeInsets.all(6),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withOpacity(0.9),
+                      shape: BoxShape.circle,
+                    ),
+                    child: Icon(
+                      isFavorite ? Icons.favorite : Icons.favorite_border,
+                      color: isFavorite ? Colors.red : Colors.grey,
+                      size: 20,
+                    ),
+                  ),
                 ),
-                child: Icon(
-                  place.isFavorite ? Icons.favorite : Icons.favorite_border,
-                  color: place.isFavorite ? Colors.red : Colors.grey,
-                  size: 20,
-                ),
-              ),
+                if (!isProtected) ...[
+                  const SizedBox(height: 6),
+                  Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      _CardActionButton(
+                        icon: Icons.edit,
+                        backgroundColor: const Color(0xFF22B07D),
+                        iconColor: Colors.white,
+                        tooltip: 'Editar',
+                        onTap: () => onEditPlace?.call(place),
+                      ),
+                      const SizedBox(width: 6),
+                      _CardActionButton(
+                        icon: Icons.delete_outline,
+                        backgroundColor: Colors.white,
+                        iconColor: Colors.red,
+                        tooltip: 'Eliminar',
+                        onTap: () => onDeletePlace?.call(place),
+                      ),
+                    ],
+                  ),
+                ],
+              ],
             ),
           ),
           Positioned(
@@ -173,21 +220,39 @@ class PopularCard extends StatelessWidget {
   }
 }
 
-class _SectionTitle extends StatelessWidget {
-  final String text;
-  const _SectionTitle(this.text);
+
+class _CardActionButton extends StatelessWidget {
+  final IconData icon;
+  final Color backgroundColor;
+  final Color iconColor;
+  final String tooltip;
+  final VoidCallback? onTap;
+
+  const _CardActionButton({
+    required this.icon,
+    required this.backgroundColor,
+    required this.iconColor,
+    required this.tooltip,
+    this.onTap,
+  });
 
   @override
   Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.only(top: 4, bottom: 12),
-      child: Text(
-        text,
-        style: const TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.w900,
-          color: Colors.black,
-          letterSpacing: 0.5,
+    return Tooltip(
+      message: tooltip,
+      child: GestureDetector(
+        onTap: onTap,
+        child: Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: backgroundColor.withOpacity(0.95),
+            shape: BoxShape.circle,
+          ),
+          child: Icon(
+            icon,
+            size: 16,
+            color: iconColor,
+          ),
         ),
       ),
     );

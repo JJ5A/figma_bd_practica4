@@ -24,6 +24,7 @@ void main() {
 
     setUpAll(() async {
       dbHelper = DatabaseHelper.instance;
+      await dbHelper.resetDatabase();
       categoryService = CategoryService();
       placeService = PlaceService();
       userService = UserService();
@@ -160,6 +161,11 @@ void main() {
         expect(popularPlaces, isNotEmpty);
         for (Place place in popularPlaces) {
           expect(place.type, equals(PlaceType.popular));
+        }
+
+        expect(nearbyPlaces, isNotEmpty);
+        for (Place place in nearbyPlaces) {
+          expect(place.type, equals(PlaceType.nearby));
         }
       });
 
@@ -327,8 +333,8 @@ void main() {
         expect(newUser, isNotNull);
         
         // 3. Check date availability
-        DateTime checkIn = DateTime.now().add(const Duration(days: 5));
-        DateTime checkOut = DateTime.now().add(const Duration(days: 8));
+        DateTime checkIn = DateTime.now().add(const Duration(days: 40));
+        DateTime checkOut = DateTime.now().add(const Duration(days: 43));
         
         bool isAvailable = await reservationService.isDateAvailable(
           selectedPlace.id!,
